@@ -1,9 +1,10 @@
 {
-  "serial path":"/dev/ttyUSB0",
+  "serial path":"/dev/ttyS0",
   "log path":"/var/run/serial.log",
-  "band rate":9600,
+  "band rate":300,
   "flow control":0,
   "data bits":8,
   "stop bits":1,
-  "parity":"N"
+  "parity":"o",
+  "rec delay":2000
 }

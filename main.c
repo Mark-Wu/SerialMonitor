@@ -21,7 +21,7 @@
 #include <pthread.h>
 #endif
 
-#define     MAX_SIZE    256
+#define     MAX_SIZE    1024
 #define FILE_BUFFER_MAXLEN 1024*1024
 
 bool __init = true;
@@ -34,6 +34,7 @@ int flow_ctl = 0;
 int data_bits = 8;
 int stop_bits = 1;
 char parity[32] = {0};
+int rec_delay = 100;
 int log_fd;
 Queue ptr_queue;
 pthread_mutex_t queue_lock;
@@ -85,7 +86,7 @@ int serial_recv(int fd, char *rcv_buf,int data_len)
             }
          }
 #else
-        usleep(1000*90);
+        usleep(1000*rec_delay);
         len = read(fd,rcv_buf,data_len);
 #endif
 
@@ -248,12 +249,10 @@ static void * write_log(void *arg)
         printf("error is %s\n", strerror(errno));
         exit(1);
     }
-    printf("already to record log.\r\n");
     while (__init){
         while(IsEmpty(&ptr_queue) == 1){
             usleep(1000);
         }
-        printf("queue is not empty.\r\n");
         pthread_mutex_lock(&queue_lock);
         DeQueue(&ptr_queue,&pacakge_address);
         pthread_mutex_unlock(&queue_lock);
@@ -372,6 +371,9 @@ int json_configs_read(char *config_path)
     jRead( (char *)json.data, "{'parity'" , &jElement );
     memcpy(parity,jElement.pValue,1);
     printf(" parity = %c\r\n",parity[0]);
+    jRead( (char *)json.data, "{'rec delay'" , &jElement );
+    rec_delay = fast_atoi(jElement.pValue);
+    printf( " rec delay = %d ms\r\n",rec_delay);
 
     freeFileBuffer( &json );
 
@@ -464,12 +466,12 @@ int main(int argc,char **argv)
         {
             gettimeofday(&ts,NULL);
             pstr = pstr_buffer;
-            pstr += sprintf(pstr,"%ld : ",ts.tv_sec*1000 + ts.tv_usec/1000);
+            pstr += sprintf(pstr,"%ld(s)+%ld(us) : ",ts.tv_sec,ts.tv_usec );
             for (i = 0; i < len; ++i) {
-                pstr += sprintf(pstr,"%02X ",rcv_buf[i]);
+                pstr += sprintf(pstr,"%02X ",(unsigned char)rcv_buf[i]);
             }
             pstr += sprintf(pstr,"\r\n");
-            printf("%s add to queue.\r\n",pstr_buffer);
+            printf("%s",pstr_buffer); 
             pthread_mutex_lock(&queue_lock);
             EnQueue(&ptr_queue,(uint32_t)pstr_buffer);
             pthread_mutex_unlock(&queue_lock);
