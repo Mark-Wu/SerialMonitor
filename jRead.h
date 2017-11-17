@@ -2,7 +2,8 @@
 //
 // see jRead.c for more information
 //
-
+#ifndef SERIAL_JREAD_H
+#define SERIAL_JREAD_H
 // uncomment this if you really want to use double quotes in query strings instead of '
 //#define JREAD_DOUBLE_QUOTE_IN_QUERY
 
@@ -124,5 +125,6 @@ int jReadStrcmp( struct jReadElement *j1, struct jReadElement *j2 ); // compare 
 // copy element to '\0'-terminated buffer
 char * jRead_strcpy( char *destBuffer, int destLength, struct jReadElement *pElement );
 
+#endif
 #endif
 // end of jRead.h

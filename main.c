@@ -13,7 +13,9 @@
 #include <stdbool.h>
 #include <signal.h>
 #include "jRead.h"
+#include "queue_list.h"
 
+#define  __THREAD
 
 #ifdef __THREAD
 #include <pthread.h>
@@ -24,6 +26,7 @@
 
 bool __init = true;
 char pserial_dir[128] = {0};
+
 char plog_path[128] = {0};
 
 int band_rate = 115200;
@@ -31,6 +34,10 @@ int flow_ctl = 0;
 int data_bits = 8;
 int stop_bits = 1;
 char parity[32] = {0};
+int log_fd;
+Queue ptr_queue;
+pthread_mutex_t queue_lock;
+
 
 struct FileBuffer{
     unsigned long length;			// length in bytes
@@ -55,25 +62,38 @@ static void setsignal(void)
 
 int serial_recv(int fd, char *rcv_buf,int data_len)
 {
-    int len,fs_sel;
+    int len,temp,fs_sel;
     fd_set fs_read;
+    char *pos = rcv_buf;
 
     struct timeval time;
 
     FD_ZERO(&fs_read);
     FD_SET(fd,&fs_read);
-
-    time.tv_sec = 1;
+    time.tv_sec = 5;
     time.tv_usec = 0;
-
+    len = 0;
     fs_sel = select(fd+1,&fs_read,NULL,NULL,&time);
-    if(fs_sel)
-    {
+    if(fs_sel) {
+#if 0
+        for(pos = rcv_buf;len < data_len; pos += temp ){
+            temp = read(fd,pos,data_len - len);
+            if(temp <= 0)
+                break;
+            else{
+                len += temp;
+            }
+         }
+#else
+        usleep(1000*90);
         len = read(fd,rcv_buf,data_len);
+#endif
+
         return len;
-    }
-    else
+    } else{
         return -1;
+    }
+
 }
 int serial_set(int fd,int speed,int flow_ctrl,int databits,int stopbits,int parity)
 {
@@ -218,12 +238,31 @@ int serial_init(int fd, int speed,int flow_ctrl,int databits,int stopbits,int pa
 
 static void * write_log(void *arg)
 {
-    char *pfile_path = (char *)(arg);
-    printf("sub thread log direction: %s .\r\n",pfile_path);
+    int log_fd;
+    uint32_t pacakge_address;
+    char *package = NULL;
+    printf("sub thread log path: %s .\r\n",plog_path);
 
-    while (__init){
-        usleep(1000*5);
+    log_fd = open(plog_path,O_RDWR | O_APPEND | O_CREAT);
+    if(log_fd == -1) {
+        printf("error is %s\n", strerror(errno));
+        exit(1);
     }
+    printf("already to record log.\r\n");
+    while (__init){
+        while(IsEmpty(&ptr_queue) == 1){
+            usleep(1000);
+        }
+        printf("queue is not empty.\r\n");
+        pthread_mutex_lock(&queue_lock);
+        DeQueue(&ptr_queue,&pacakge_address);
+        pthread_mutex_unlock(&queue_lock);
+        package = (char *)pacakge_address;
+        write(log_fd,package,strlen(package));
+        free(package);
+    }
+    printf("log thread is end.");
+    close(log_fd);
     return NULL;
 }
 
@@ -252,7 +291,6 @@ static void print_tips(void)
                    "        \"stop bits\":1,\n"
                    "        \"parity\":\"N\"\n"
                    "}\r\n");
-
     return;
 }
 
@@ -330,7 +368,7 @@ int json_configs_read(char *config_path)
     printf( " data bits = %d \r\n",data_bits);
     jRead( (char *)json.data, "{'stop bits'" , &jElement );
     stop_bits = fast_atoi(jElement.pValue);
-    printf( " flow control = %d \r\n",stop_bits);
+    printf( " stop bits = %d \r\n",stop_bits);
     jRead( (char *)json.data, "{'parity'" , &jElement );
     memcpy(parity,jElement.pValue,1);
     printf(" parity = %c\r\n",parity[0]);
@@ -343,20 +381,23 @@ int json_configs_read(char *config_path)
 int main(int argc,char **argv)
 {
     int serial_fd;
-    int log_fd;
+
     int err;
     int len;
     char rcv_buf[MAX_SIZE];
-    char str_buffer[4*MAX_SIZE];
+    char *pstr_buffer;
     char *pstr = NULL;
     struct timeval ts;
     int i;
+#ifdef __THREAD
+    pthread_t id;
+    pthread_attr_t attr;
+#endif
 
     if(argc != 3){
         print_tips();
         exit(0);
     }
-
 
     for ( i = 1; i < argc;i++) {
         char *arg=argv[i];
@@ -366,6 +407,7 @@ int main(int argc,char **argv)
 
                 err = json_configs_read(argv[i]);
                 if(err == -1){
+                    printf("error : json.\r\n");
                     exit(1);
                 }
             } else {
@@ -378,30 +420,17 @@ int main(int argc,char **argv)
         }
 
     }
-    setsignal();
+   setsignal();
 
 #ifdef __THREAD
-    pthread_t id;
-
-    pthread_attr_t attr;
 
     pthread_attr_init(&attr);
-
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_mutex_init(&queue_lock,NULL);
+    pthread_create(&id,&attr,write_log,NULL);
 
 #endif
-
-    log_fd = open(plog_path,O_RDWR | O_APPEND | O_CREAT);
-    if(log_fd == -1) {
-        printf("error is %s\n", strerror(errno));
-        exit(1);
-    }
-
-#ifdef __THREAD
-    pthread_create(&id,NULL,(void *)write_log,(void *)plog_path);
-#endif
-
-    serial_fd = open(pserial_dir,O_RDONLY | O_RDWR);
+    serial_fd = open(pserial_dir, O_RDWR | O_NONBLOCK);
     if(serial_fd == -1){
         printf("\r\n open %s error.\r\n",pserial_dir);
         exit(1);
@@ -420,34 +449,35 @@ int main(int argc,char **argv)
         printf("fcntl=%d\n",fcntl(serial_fd, F_SETFL,0));
 
     do{
-        //err = serial_init(serial_fd,115200,0,8,1,'N');
         err = serial_init(serial_fd,band_rate,flow_ctl,data_bits,stop_bits,parity[0]);
         printf("Set Port Exactly!\n");
     }while(-1 == err || -1 == serial_fd);
 
+
     while (__init)
     {
+        pstr_buffer = (char *)malloc(MAX_SIZE * 4);
+        memset(pstr_buffer,0x00,MAX_SIZE * 4);
         len = serial_recv(serial_fd, rcv_buf,MAX_SIZE);
+        printf("rec len = %d\r\n",len);
         if(len > 0)
         {
             gettimeofday(&ts,NULL);
-            pstr = str_buffer;
+            pstr = pstr_buffer;
             pstr += sprintf(pstr,"%ld : ",ts.tv_sec*1000 + ts.tv_usec/1000);
             for (i = 0; i < len; ++i) {
                 pstr += sprintf(pstr,"%02X ",rcv_buf[i]);
             }
             pstr += sprintf(pstr,"\r\n");
-            write(log_fd,str_buffer,pstr-str_buffer);
+            printf("%s add to queue.\r\n",pstr_buffer);
+            pthread_mutex_lock(&queue_lock);
+            EnQueue(&ptr_queue,(uint32_t)pstr_buffer);
+            pthread_mutex_unlock(&queue_lock);
         }
         usleep(1000);
     }
-    close(log_fd);
-    close(serial_fd);
 
-#ifdef __THREAD
-    /* get sub thread end status */
-    pthread_join(id,NULL);
-#endif
+    close(serial_fd);
 
     printf(" serial port monitor closed.\r\n");
     return 0;
