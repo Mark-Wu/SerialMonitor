@@ -458,12 +458,12 @@ int main(int argc,char **argv)
 
     while (__init)
     {
-        pstr_buffer = (char *)malloc(MAX_SIZE * 4);
-        memset(pstr_buffer,0x00,MAX_SIZE * 4);
         len = serial_recv(serial_fd, rcv_buf,MAX_SIZE);
         printf("rec len = %d\r\n",len);
         if(len > 0)
         {
+            pstr_buffer = (char *)malloc(MAX_SIZE * 4);
+            memset(pstr_buffer,0x00,MAX_SIZE * 4);
             gettimeofday(&ts,NULL);
             pstr = pstr_buffer;
             pstr += sprintf(pstr,"%ld(s)+%ld(us) : ",ts.tv_sec,ts.tv_usec );

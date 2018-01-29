@@ -6,5 +6,5 @@
   "data bits":8,
   "stop bits":1,
   "parity":"o",
-  "rec delay":2000
+  "rec delay":1000
 }
